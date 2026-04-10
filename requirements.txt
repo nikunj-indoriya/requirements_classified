@@ -1,0 +1,13 @@
+numpy
+pandas
+scikit-learn
+nltk
+scipy
+tqdm
+gensim
+sentence-transformers
+tensorflow
+tensorflow-hub
+setuptools
+hdbscan
+wikipedia
