@@ -308,35 +308,233 @@ def map_clusters_to_labels(cluster_labels, assignment):
 # LABELING — WIKIDOMINER
 # =============================================================================
 
-def _wiki_clean(text):
-    text = text.lower()
-    text = re.sub(r"\d+", "", text)
-    text = re.sub(r"[^\w\s]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+def _has_title_overlap(keyword, title):
+    """True if keyword and Wikipedia title share at least one non-trivial word."""
+    skip = {"the", "a", "an", "of", "in", "for", "and", "or", "to", "is", "are", "was"}
+    kw_words   = {w for w in keyword.lower().split() if w not in skip and len(w) > 2}
+    title_words = {w for w in title.lower().split()   if w not in skip and len(w) > 2}
+    return bool(kw_words & title_words)
 
-def extract_keywords(texts, top_k=10):
-    words = []
-    for t in texts:
-        words.extend(_wiki_clean(t).split())
-    freq = {w: c for w, c in Counter(words).items() if len(w) > 2}
-    return [w for w, _ in Counter(freq).most_common(top_k)]
 
-def fetch_wikipedia_articles(keywords, max_per_keyword=2):
-    import wikipedia
-    corpus = []
-    for kw in keywords:
+def extract_keywords(texts, top_k=50):
+    """
+    Paper-faithful keyword extraction (Ezzini et al., WikiDoMiner, ESEC/FSE 2022).
+
+    Steps:
+      A. spaCy NP chunker  — extract lemmatized noun phrases per document
+      B. WordNet filter    — discard NPs that are plain English (in WordNet);
+                             multi-word phrases are kept unless their compound
+                             form is also in WordNet
+      C. TF-IDF ranking   — score each surviving NP across documents, return top-K
+    """
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from nltk.corpus import wordnet
+
+    # ---- A: NP extraction via spaCy ----------------------------------------
+    try:
+        import spacy
         try:
-            for title in wikipedia.search(kw)[:max_per_keyword]:
-                try:
-                    corpus.append(wikipedia.page(title, auto_suggest=False).content)
-                except Exception:
-                    pass
+            nlp = spacy.load("en_core_web_sm")
+        except OSError:
+            import subprocess, sys
+            print("  Downloading spaCy model en_core_web_sm …")
+            subprocess.run([sys.executable, "-m", "spacy", "download", "en_core_web_sm"],
+                           check=True, capture_output=True)
+            nlp = spacy.load("en_core_web_sm")
+        spacy_ok = True
+    except ImportError:
+        spacy_ok = False
+
+    if not spacy_ok:
+        # Graceful fallback to simple word-frequency (no spaCy)
+        words = []
+        for t in texts:
+            t = re.sub(r"[^\w\s]", " ", t.lower())
+            words.extend(w for w in t.split() if len(w) > 2)
+        freq = Counter(words)
+        return [w for w, _ in freq.most_common(top_k)]
+
+    doc_np_lists = []
+    for text in texts:
+        doc = nlp(text[:8000])          # cap length to keep speed reasonable
+        nps = []
+        for chunk in doc.noun_chunks:
+            # lemmatise each content word inside the NP
+            tokens = [
+                token.lemma_.lower()
+                for token in chunk
+                if not token.is_stop and token.is_alpha and len(token.lemma_) > 1
+            ]
+            lemma_np = " ".join(tokens).strip()
+            if len(lemma_np) > 2:
+                nps.append(lemma_np)
+        doc_np_lists.append(nps)
+
+    all_nps = set(np_s for nps in doc_np_lists for np_s in nps)
+
+    # ---- B: WordNet filter --------------------------------------------------
+    domain_nps = []
+    for np_str in all_nps:
+        tokens = np_str.strip().split()
+        if not tokens:
+            continue
+        if len(tokens) == 1:
+            # Single word: discard if it exists as a generic English word in WordNet
+            if not wordnet.synsets(tokens[0]):
+                domain_nps.append(np_str)
+        else:
+            # Multi-word phrase: discard only if the compound itself is in WordNet
+            # (e.g. "software_system" is not; "dining_room" is)
+            if not wordnet.synsets("_".join(tokens)):
+                domain_nps.append(np_str)
+
+    # If filtering is too aggressive, fall back to all NPs
+    if len(domain_nps) < min(5, len(all_nps)):
+        domain_nps = list(all_nps)
+
+    # ---- C: TF-IDF ranking --------------------------------------------------
+    domain_np_set = set(domain_nps)
+    # Build per-document NP bags; replace spaces in NPs with underscores so
+    # TfidfVectorizer treats each NP as a single token
+    doc_bags = []
+    for nps in doc_np_lists:
+        filtered = [np_s.replace(" ", "_") for np_s in nps if np_s in domain_np_set]
+        doc_bags.append(" ".join(filtered) if filtered else "")
+
+    non_empty = [d for d in doc_bags if d.strip()]
+    if not non_empty:
+        freq = Counter(np_s for nps in doc_np_lists for np_s in nps)
+        return [kw for kw, _ in freq.most_common(top_k)]
+
+    try:
+        vectorizer   = TfidfVectorizer(ngram_range=(1, 1), min_df=1)
+        tfidf_matrix = vectorizer.fit_transform(non_empty)
+        scores       = np.asarray(tfidf_matrix.sum(axis=0)).flatten()
+        feature_names = vectorizer.get_feature_names_out()
+        top_indices  = np.argsort(scores)[::-1][:top_k]
+        return [feature_names[i].replace("_", " ") for i in top_indices]
+    except Exception:
+        freq = Counter(np_s for nps in doc_np_lists for np_s in nps if np_s in domain_np_set)
+        return [kw for kw, _ in freq.most_common(top_k)]
+
+
+def fetch_wikipedia_articles(keywords, depth=1, max_articles=300):
+    """
+    Paper-faithful Wikipedia querying (Ezzini et al., WikiDoMiner, ESEC/FSE 2022).
+
+    For each keyword:
+      1. Search Wikipedia and find an article whose title *partially overlaps*
+         with the keyword (not just the top search hit).
+      2. Expand the corpus by traversing the Wikipedia category graph:
+         depth=0  →  direct matching articles only
+         depth=1  →  + all articles in the same categories (Figure 2, depth-1)
+         depth=2  →  + articles in subcategories one level deeper (depth-2)
+
+    Uses 'wikipedia' for search and 'wikipediaapi' for category traversal.
+    Falls back to simple fetching if wikipediaapi is not installed.
+    """
+    import wikipedia as _wiki
+
+    try:
+        import wikipediaapi
+        wiki_api = wikipediaapi.Wikipedia(
+            user_agent="UnsupervisedReqClassifier/1.0",
+            language="en",
+        )
+        api_ok = True
+    except ImportError:
+        api_ok = False
+
+    corpus      = []
+    seen_titles = set()
+
+    # ---- fallback (no wikipediaapi) ----------------------------------------
+    if not api_ok:
+        for kw in keywords:
+            try:
+                for title in _wiki.search(kw)[:2]:
+                    if title not in seen_titles:
+                        seen_titles.add(title)
+                        try:
+                            corpus.append(_wiki.page(title, auto_suggest=False).content)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        return corpus
+
+    # ---- helpers -----------------------------------------------------------
+    def _add(title):
+        if title in seen_titles or len(corpus) >= max_articles:
+            return
+        seen_titles.add(title)
+        page = wiki_api.page(title)
+        if page.exists() and page.summary:
+            corpus.append(page.summary)
+
+    def _expand(cat_page, cur_depth, max_depth):
+        if len(corpus) >= max_articles:
+            return
+        try:
+            for m_title, member in list(cat_page.categorymembers.items())[:60]:
+                if len(corpus) >= max_articles:
+                    break
+                if member.ns == 0:                      # article namespace
+                    _add(member.title)
+                elif member.ns == 14 and cur_depth < max_depth:  # category
+                    _expand(member, cur_depth + 1, max_depth)
         except Exception:
             pass
+
+    # ---- main loop ---------------------------------------------------------
+    for kw in keywords:
+        if len(corpus) >= max_articles:
+            break
+        try:
+            search_hits = _wiki.search(kw)[:5]
+        except Exception:
+            continue
+
+        # Prefer a hit whose title overlaps with the keyword (partial match)
+        matched = next((t for t in search_hits if _has_title_overlap(kw, t)), None)
+        if not matched and search_hits:
+            matched = search_hits[0]         # fallback: top result
+        if not matched:
+            continue
+
+        page = wiki_api.page(matched)
+        if not page.exists():
+            continue
+
+        _add(page.title)
+
+        # Category traversal (depth >= 1)
+        if depth >= 1:
+            try:
+                for _cat_title, cat_page in list(page.categories.items())[:10]:
+                    if len(corpus) >= max_articles:
+                        break
+                    _expand(cat_page, 1, depth)
+            except Exception:
+                pass
+
     return corpus
 
 def build_wikidominer_label_prototypes(texts, labels, class_names, embedder,
-                                        dataset_name, embedding_name, top_k=10):
+                                        dataset_name, embedding_name,
+                                        top_k=50, wiki_depth=1):
+    """
+    Build one Wikipedia-derived embedding prototype per class label.
+
+    For each class:
+      1. Extract top-K domain-specific NP keywords from that class's texts
+         (spaCy NP chunker → WordNet filter → TF-IDF ranking).
+      2. Fetch Wikipedia articles for those keywords with category traversal
+         up to wiki_depth levels (0=direct match, 1=category peers, 2=subcategories).
+      3. Embed the Wikipedia article summaries and average → prototype vector.
+
+    Prototypes are cached so re-runs skip the expensive Wikipedia/embedding step.
+    """
     cache_dir = f"cache/wikidominer/{dataset_name}"
     os.makedirs(cache_dir, exist_ok=True)
     cache_path = os.path.join(cache_dir, f"{embedding_name}.npy")
@@ -345,20 +543,25 @@ def build_wikidominer_label_prototypes(texts, labels, class_names, embedder,
         print(f"Loaded WikiDoMiner cache: {cache_path}")
         return np.load(cache_path)
 
-    print(f"Building WikiDoMiner prototypes for {embedding_name}...")
+    print(f"Building WikiDoMiner prototypes for {embedding_name} (top_k={top_k}, depth={wiki_depth})...")
     label_prototypes = []
 
     for class_id, class_name in enumerate(class_names):
-        print(f"  Building corpus for class: {class_name}")
+        print(f"  [{class_id+1}/{len(class_names)}] class='{class_name}'")
         class_texts = [texts[i] for i in range(len(texts)) if labels[i] == class_id]
 
         if not class_texts:
-            dim = embedder.encode(["test"]).shape[1]
+            dim = embedder.encode(["placeholder"]).shape[1]
             label_prototypes.append(np.zeros(dim))
             continue
 
-        wiki_corpus = fetch_wikipedia_articles(extract_keywords(class_texts, top_k)) or class_texts
-        prototype = np.mean(embedder.encode(wiki_corpus), axis=0)
+        keywords    = extract_keywords(class_texts, top_k=top_k)
+        print(f"    keywords ({len(keywords)}): {keywords[:8]} …")
+        wiki_corpus = fetch_wikipedia_articles(keywords, depth=wiki_depth)
+        print(f"    fetched {len(wiki_corpus)} Wikipedia article summaries")
+
+        source_texts = wiki_corpus if wiki_corpus else class_texts
+        prototype    = np.mean(embedder.encode(source_texts), axis=0)
         label_prototypes.append(prototype)
 
     label_prototypes = np.array(label_prototypes)

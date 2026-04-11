@@ -11,3 +11,6 @@ tensorflow-hub
 setuptools
 hdbscan
 wikipedia
+spacy
+Wikipedia-API
+# After pip install, also run:  python -m spacy download en_core_web_sm

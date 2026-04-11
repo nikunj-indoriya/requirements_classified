@@ -86,3 +86,5 @@ results/analysis_hybrid/**/*.png
 !requirements.txt
 !data/
 !data/**
+
+test.ipynb 
