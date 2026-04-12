@@ -520,53 +520,87 @@ def fetch_wikipedia_articles(keywords, depth=1, max_articles=300):
 
     return corpus
 
+def _fetch_and_cache_wiki_articles(texts, labels, class_names, dataset_name,
+                                    top_k=50, depth=0):
+    """
+    Fetch Wikipedia article summaries ONCE per (dataset, top_k, depth) and
+    cache as JSON.  All 12 embedding models share this cache — Wikipedia is
+    only queried once regardless of how many models are run afterwards.
+    """
+    import json
+    cache_dir  = f"cache/wikidominer/{dataset_name}"
+    os.makedirs(cache_dir, exist_ok=True)
+    cache_path = os.path.join(cache_dir, f"articles_topk{top_k}_depth{depth}.json")
+
+    if os.path.exists(cache_path):
+        print(f"  Loaded Wikipedia article cache: {cache_path}")
+        with open(cache_path) as f:
+            return json.load(f)
+
+    print(f"  Fetching Wikipedia articles (top_k={top_k}, depth={depth}) — one-time cost...")
+    articles_per_class = {}
+
+    for class_id, class_name in enumerate(class_names):
+        print(f"    [{class_id+1}/{len(class_names)}] class='{class_name}'")
+        class_texts = [texts[i] for i in range(len(texts)) if labels[i] == class_id]
+
+        if not class_texts:
+            articles_per_class[class_name] = []
+            continue
+
+        keywords    = extract_keywords(class_texts, top_k=top_k)
+        print(f"      keywords ({len(keywords)}): {keywords[:5]} …")
+        wiki_corpus = fetch_wikipedia_articles(keywords, depth=depth)
+        print(f"      fetched {len(wiki_corpus)} article summaries")
+        articles_per_class[class_name] = wiki_corpus
+
+    with open(cache_path, "w") as f:
+        json.dump(articles_per_class, f)
+    print(f"  Saved Wikipedia article cache: {cache_path}")
+    return articles_per_class
+
+
 def build_wikidominer_label_prototypes(texts, labels, class_names, embedder,
                                         dataset_name, embedding_name,
-                                        top_k=50, wiki_depth=1):
+                                        top_k=50, wiki_depth=0):
     """
     Build one Wikipedia-derived embedding prototype per class label.
 
-    For each class:
-      1. Extract top-K domain-specific NP keywords from that class's texts
-         (spaCy NP chunker → WordNet filter → TF-IDF ranking).
-      2. Fetch Wikipedia articles for those keywords with category traversal
-         up to wiki_depth levels (0=direct match, 1=category peers, 2=subcategories).
-      3. Embed the Wikipedia article summaries and average → prototype vector.
+    Wikipedia articles are fetched and cached ONCE (shared across all embedding
+    models). Each model only pays the embedding cost, not the network cost.
 
-    Prototypes are cached so re-runs skip the expensive Wikipedia/embedding step.
+    Steps:
+      1. _fetch_and_cache_wiki_articles  — NP keywords → Wikipedia → JSON cache
+      2. For each class, embed the cached article summaries → mean → prototype
+      3. Save prototype matrix to .npy cache
     """
-    cache_dir = f"cache/wikidominer/{dataset_name}"
+    cache_dir  = f"cache/wikidominer/{dataset_name}"
     os.makedirs(cache_dir, exist_ok=True)
     cache_path = os.path.join(cache_dir, f"{embedding_name}.npy")
 
     if os.path.exists(cache_path):
-        print(f"Loaded WikiDoMiner cache: {cache_path}")
+        print(f"Loaded WikiDoMiner prototype cache: {cache_path}")
         return np.load(cache_path)
 
-    print(f"Building WikiDoMiner prototypes for {embedding_name} (top_k={top_k}, depth={wiki_depth})...")
+    print(f"Building WikiDoMiner prototypes for {embedding_name}...")
+
+    # Step 1: get articles (instant if already cached)
+    articles_per_class = _fetch_and_cache_wiki_articles(
+        texts, labels, class_names, dataset_name, top_k=top_k, depth=wiki_depth
+    )
+
+    # Step 2: embed per class
     label_prototypes = []
-
     for class_id, class_name in enumerate(class_names):
-        print(f"  [{class_id+1}/{len(class_names)}] class='{class_name}'")
-        class_texts = [texts[i] for i in range(len(texts)) if labels[i] == class_id]
-
-        if not class_texts:
-            dim = embedder.encode(["placeholder"]).shape[1]
-            label_prototypes.append(np.zeros(dim))
-            continue
-
-        keywords    = extract_keywords(class_texts, top_k=top_k)
-        print(f"    keywords ({len(keywords)}): {keywords[:8]} …")
-        wiki_corpus = fetch_wikipedia_articles(keywords, depth=wiki_depth)
-        print(f"    fetched {len(wiki_corpus)} Wikipedia article summaries")
-
-        source_texts = wiki_corpus if wiki_corpus else class_texts
-        prototype    = np.mean(embedder.encode(source_texts), axis=0)
+        class_texts  = [texts[i] for i in range(len(texts)) if labels[i] == class_id]
+        wiki_articles = articles_per_class.get(class_name, [])
+        source_texts  = wiki_articles if wiki_articles else class_texts
+        prototype     = np.mean(embedder.encode(source_texts), axis=0)
         label_prototypes.append(prototype)
 
     label_prototypes = np.array(label_prototypes)
     np.save(cache_path, label_prototypes)
-    print(f"Saved WikiDoMiner cache: {cache_path}")
+    print(f"Saved WikiDoMiner prototype cache: {cache_path}")
     return label_prototypes
 
 def assign_clusters_wikidominer(cluster_centroids, label_prototypes):
