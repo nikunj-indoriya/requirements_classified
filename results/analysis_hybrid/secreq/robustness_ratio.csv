@@ -1,0 +1,13 @@
+method,robustness_ratio
+bge,1.0
+e5,1.0
+fasttext_pretrained,1.0
+glove_pretrained,1.0
+gte,1.0
+instructor,1.0
+minilm,1.0
+mpnet,1.0
+sbert,1.0
+sroberta,1.0
+w2v_pretrained,1.0
+w2v_self,1.0
