@@ -101,11 +101,118 @@ class SecReqDataset:
     def get_class_names(self): return self.class_names
 
 
+class FinalDataset:
+    """
+    Final.arff — 13-attribute ARFF with multi-category requirement classification.
+    Text  : attribute 0  (Requirements)
+    Label : attribute 2  (Requirement Category)
+    Valid labels: Functional, Usability, Reliability & Availability, Performance,
+                  Security, Supportability, Constraints, Interfaces, Standards, Safety
+    Rows whose label field does not match a valid category are dropped (bad parses).
+    File uses latin-1 encoding and single-quote-delimited strings in the data section.
+    """
+    _VALID_LABELS = {
+        "Functional", "Usability", "Reliability & Availability", "Performance",
+        "Security", "Supportability", "Constraints", "Interfaces", "Standards", "Safety",
+    }
+
+    def __init__(self, file_path):
+        self.file_path = file_path
+        self.texts, self.labels, self.class_names = [], [], None
+        self.label_encoder, self.label_decoder = {}, {}
+
+    def load(self):
+        import csv as _csv, io as _io
+        in_data = False
+        raw_texts, raw_labels = [], []
+
+        with open(self.file_path, "rb") as f:
+            for line_bytes in f:
+                try:
+                    line = line_bytes.decode("latin-1").strip()
+                except UnicodeDecodeError:
+                    continue
+                if not line:
+                    continue
+                if line.lower() == "@data":
+                    in_data = True
+                    continue
+                if not in_data:
+                    continue
+                try:
+                    reader = _csv.reader(_io.StringIO(line), quotechar="'",
+                                         skipinitialspace=True)
+                    vals = next(reader)
+                    if len(vals) < 3:
+                        continue
+                    label = vals[2].strip()
+                    if label not in self._VALID_LABELS:
+                        continue
+                    raw_texts.append(vals[0].strip())
+                    raw_labels.append(label)
+                except Exception:
+                    continue
+
+        self.class_names = sorted(self._VALID_LABELS)
+        self.label_encoder = {l: i for i, l in enumerate(self.class_names)}
+        self.label_decoder = {i: l for l, i in self.label_encoder.items()}
+        self.texts  = raw_texts
+        self.labels = np.array([self.label_encoder[l] for l in raw_labels])
+        return self
+
+    def get_texts(self):       return self.texts
+    def get_labels(self):      return self.labels
+    def get_class_names(self): return self.class_names
+
+
+class PUREDataset:
+    """
+    PURE.csv — public requirements documents dataset.
+    Text  : 'sentence' column
+    Labels derived from binary flag columns:
+        security=1              → 'Security'
+        reliability=1, sec=0   → 'Reliability'
+        both 0                  → 'Functional'
+    Duplicate sentences are dropped (keep first occurrence).
+    File uses latin-1 encoding.
+    """
+    def __init__(self, file_path):
+        self.file_path = file_path
+        self.texts, self.labels, self.class_names = [], [], None
+        self.label_encoder, self.label_decoder = {}, {}
+
+    def load(self):
+        df = pd.read_csv(self.file_path, encoding="latin-1")
+        df = df.dropna(subset=["sentence"])
+        df = df.drop_duplicates(subset=["sentence"])
+
+        def _derive_label(row):
+            if row["security"] == 1:
+                return "Security"
+            if row["reliability"] == 1:
+                return "Reliability"
+            return "Functional"
+
+        raw_labels = df.apply(_derive_label, axis=1).tolist()
+        self.class_names = sorted(set(raw_labels))
+        self.label_encoder = {l: i for i, l in enumerate(self.class_names)}
+        self.label_decoder = {i: l for l, i in self.label_encoder.items()}
+        self.texts  = df["sentence"].astype(str).tolist()
+        self.labels = np.array([self.label_encoder[l] for l in raw_labels])
+        return self
+
+    def get_texts(self):       return self.texts
+    def get_labels(self):      return self.labels
+    def get_class_names(self): return self.class_names
+
+
 def load_dataset(dataset_name, path):
     loaders = {
         "promise": PromiseDataset,
         "crowdre": CrowdREDataset,
         "secreq":  SecReqDataset,
+        "final":   FinalDataset,
+        "pure":    PUREDataset,
     }
     if dataset_name not in loaders:
         raise ValueError(f"Unsupported dataset: {dataset_name}")

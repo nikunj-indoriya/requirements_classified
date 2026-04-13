@@ -15,6 +15,8 @@ DATASETS = {
     "promise": "data/PROMISE_exp.arff",
     "crowdre": "data/requirements.csv",
     "secreq":  "data/secreq.csv",
+    "final":   "data/Final.arff",
+    "pure":    "data/PURE.csv",
 }
 
 
