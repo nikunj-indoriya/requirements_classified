@@ -1,0 +1,5 @@
+k,class_subset,embedding,clustering,precision,recall,f1,alpha
+2,"[0, 1]",logistic_regression,supervised,0.6409,0.5965,0.6133,
+2,"[0, 2]",logistic_regression,supervised,0.8192,0.867,0.8387,
+2,"[1, 2]",logistic_regression,supervised,0.6861,0.6846,0.6784,
+3,"[0, 1, 2]",logistic_regression,supervised,0.5452,0.7511,0.5892,
