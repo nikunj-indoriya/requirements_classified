@@ -34,11 +34,14 @@ def output_file(dataset_name, labeling_mode):
 
 
 def cluster(method, embeddings, k):
-    """Run a fixed-k clustering and return labels (or None if it fails)."""
-    if method == "kmeans":   return run_kmeans(embeddings, k)
-    if method == "hac":      return run_hac(embeddings, k)
-    if method == "spectral": return run_spectral(embeddings, k)
-    raise ValueError(f"Use tune_density for {method}")
+    """Run a fixed-k clustering and return labels, or None if the subset is too small."""
+    try:
+        if method == "kmeans":   return run_kmeans(embeddings, k)
+        if method == "hac":      return run_hac(embeddings, k)
+        if method == "spectral": return run_spectral(embeddings, k)
+        raise ValueError(f"Use tune_density for {method}")
+    except Exception:
+        return None
 
 
 def tune_density(method, embeddings, k, get_assign_fn):
@@ -139,6 +142,8 @@ def run(dataset_name, data_path, labeling_mode, max_per_class=None):
                             continue
                     else:
                         cluster_labels = cluster(method, subset_emb, k)
+                        if cluster_labels is None:
+                            continue
 
                     unique = set(cluster_labels) - {-1}
                     if len(unique) != k:

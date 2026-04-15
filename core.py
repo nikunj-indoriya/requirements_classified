@@ -367,7 +367,14 @@ def run_hac(embeddings, k):
     return AgglomerativeClustering(n_clusters=k, linkage="ward").fit_predict(embeddings)
 
 def run_spectral(embeddings, k):
+    # n_neighbors must be < n_samples; sklearn default is 10 which fails on small subsets
+    n_neighbors = min(10, len(embeddings) - 1)
+    if n_neighbors < k:
+        raise ValueError(
+            f"SpectralClustering: n_neighbors ({n_neighbors}) < k ({k}); subset too small"
+        )
     return SpectralClustering(n_clusters=k, affinity="nearest_neighbors",
+                              n_neighbors=n_neighbors,
                               assign_labels="kmeans", random_state=42).fit_predict(embeddings)
 
 def run_dbscan(embeddings, eps=0.5, min_samples=5):

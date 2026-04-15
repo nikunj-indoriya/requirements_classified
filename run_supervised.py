@@ -10,6 +10,7 @@
 import argparse
 import numpy as np
 from tqdm import tqdm
+from collections import Counter
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
@@ -50,7 +51,24 @@ def run(dataset_name, data_path, max_per_class=None):
         subset_texts  = texts[mask]
         subset_labels = np.array([{cls: i for i, cls in enumerate(combo)}[l] for l in labels[mask]])
 
-        skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+        # Adapt fold counts to the smallest class in this subset so CV never
+        # produces a training fold that is missing a class entirely.
+        min_class = min(Counter(subset_labels.tolist()).values())
+
+        if min_class < 2:
+            # Only 1 sample in some class — impossible to split; skip.
+            continue
+
+        n_outer = min(3, min_class)
+        # Minimum samples of any class that land in a training fold
+        min_in_train = max(1, (n_outer - 1) * min_class // n_outer)
+        n_inner = min(3, max(2, min_in_train))
+
+        if min_in_train < n_inner:
+            # Inner GridSearchCV would still fail; skip.
+            continue
+
+        skf = StratifiedKFold(n_splits=n_outer, shuffle=True, random_state=42)
         fold_p, fold_r, fold_f = [], [], []
 
         for train_idx, test_idx in skf.split(subset_texts, subset_labels):
@@ -60,7 +78,8 @@ def run(dataset_name, data_path, max_per_class=None):
             y_tr, y_te = subset_labels[train_idx], subset_labels[test_idx]
 
             clf  = LogisticRegression(class_weight="balanced", max_iter=2000, solver="lbfgs")
-            grid = GridSearchCV(clf, {"C": [0.01, 0.1, 1, 10]}, cv=3, scoring="f1_macro", n_jobs=-1)
+            grid = GridSearchCV(clf, {"C": [0.01, 0.1, 1, 10]}, cv=n_inner,
+                                scoring="f1_macro", n_jobs=-1)
             grid.fit(X_tr, y_tr)
 
             p, r, f1 = compute_macro_metrics(y_te, grid.best_estimator_.predict(X_te))
