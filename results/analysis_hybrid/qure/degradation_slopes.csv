@@ -1,0 +1,13 @@
+method,slope,r2
+bge,0.0,0.0
+e5,0.0,0.0
+fasttext_pretrained,0.0,0.0
+glove_pretrained,0.0,0.0
+gte,0.0,0.0
+instructor,0.0,0.0
+minilm,0.0,0.0
+mpnet,0.0,0.0
+sbert,0.0,0.0
+sroberta,0.0,0.0
+w2v_pretrained,0.0,0.0
+w2v_self,0.0,0.0
