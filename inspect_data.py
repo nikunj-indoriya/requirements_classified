@@ -17,6 +17,7 @@ DATASETS = {
     "secreq":  "data/secreq.csv",
     "final":   "data/Final.arff",
     "pure":    "data/PURE.csv",
+    "qure":    "data/QuRE.csv",
 }
 
 

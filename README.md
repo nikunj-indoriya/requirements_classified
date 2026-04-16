@@ -32,7 +32,8 @@ unsupervised_requirements_01/
 │   ├── requirements.csv     CrowdRE dataset  (2966 samples, 5 classes)
 │   ├── secreq.csv           SecReq dataset   (510 samples, 2 classes)
 │   ├── Final.arff           Final dataset    (~625 samples, 10 classes)
-│   └── PURE.csv             PURE dataset     (~3000 samples, 3 classes)
+│   ├── PURE.csv             PURE dataset     (~3000 samples, 3 classes)
+│   └── QuRE.csv             QuRE dataset     (2187 samples, 2 classes)
 │
 ├── pretrained/              Pre-trained word-embedding files (not in git)
 │   ├── glove.6B.300d.txt
@@ -63,7 +64,7 @@ unsupervised_requirements_01/
 Raw Dataset
     │
     ▼
-Dataset Loader  (PromiseDataset / CrowdREDataset / SecReqDataset / FinalDataset / PUREDataset)
+Dataset Loader  (PromiseDataset / CrowdREDataset / SecReqDataset / FinalDataset / PUREDataset / QUREDataset)
     │  parses ARFF or CSV, encodes labels numerically
     │
     ▼
@@ -112,6 +113,7 @@ CSV Logging  (resume-safe: already-completed rows are skipped on re-run)
 | `secreq` | `data/secreq.csv` | 510 | 2 | Security vs. non-security (CSV) |
 | `final` | `data/Final.arff` | ~625 | 10 | Multi-category NFRs; ARFF with quoted fields |
 | `pure` | `data/PURE.csv` | ~3000 | 3 | Binary security/reliability flags → Functional / Reliability / Security |
+| `qure` | `data/QuRE.csv` | 2187 | 2 | Requirements quality: `ok` vs `defect` |
 
 **PURE label derivation:** `security=1 → Security`; `reliability=1 AND security=0 → Reliability`; else `Functional`.
 
@@ -163,10 +165,11 @@ CSV Logging  (resume-safe: already-completed rows are skipped on re-run)
 ### 1. Inspect datasets
 
 ```bash
-python inspect_data.py                          # all five datasets
+python inspect_data.py                          # all six datasets
 python inspect_data.py --dataset promise        # just PROMISE
 python inspect_data.py --dataset final          # just Final
 python inspect_data.py --dataset pure           # just PURE
+python inspect_data.py --dataset qure           # just QuRE
 python inspect_data.py --dataset promise --max_per_class 150   # preview subsampling
 ```
 
@@ -181,16 +184,19 @@ python run_unsupervised.py --dataset secreq   --path data/secreq.csv
 # Full data — new datasets
 python run_unsupervised.py --dataset final    --path data/Final.arff
 python run_unsupervised.py --dataset pure     --path data/PURE.csv
+python run_unsupervised.py --dataset qure     --path data/QuRE.csv
 
 # WikiDoMiner labeling
 python run_unsupervised.py --dataset promise  --path data/PROMISE_exp.arff --labeling_mode wikidominer
 python run_unsupervised.py --dataset final    --path data/Final.arff        --labeling_mode wikidominer
 python run_unsupervised.py --dataset pure     --path data/PURE.csv          --labeling_mode wikidominer
+python run_unsupervised.py --dataset qure     --path data/QuRE.csv          --labeling_mode wikidominer
 
 # Hybrid labeling
 python run_unsupervised.py --dataset promise  --path data/PROMISE_exp.arff --labeling_mode hybrid
 python run_unsupervised.py --dataset final    --path data/Final.arff        --labeling_mode hybrid
 python run_unsupervised.py --dataset pure     --path data/PURE.csv          --labeling_mode hybrid
+python run_unsupervised.py --dataset qure     --path data/QuRE.csv          --labeling_mode hybrid
 
 # Subsampled (faster — recommended for PROMISE and Final which are compute-heavy)
 python run_unsupervised.py --dataset promise  --path data/PROMISE_exp.arff --max_per_class 150
@@ -205,6 +211,7 @@ python run_supervised.py --dataset crowdre  --path data/requirements.csv
 python run_supervised.py --dataset secreq   --path data/secreq.csv
 python run_supervised.py --dataset final    --path data/Final.arff
 python run_supervised.py --dataset pure     --path data/PURE.csv
+python run_supervised.py --dataset qure     --path data/QuRE.csv
 
 # Subsampled version (must match the unsupervised cap for fair comparison)
 python run_supervised.py --dataset promise  --path data/PROMISE_exp.arff --max_per_class 150
@@ -220,6 +227,7 @@ python analysis.py --dataset crowdre
 python analysis.py --dataset secreq
 python analysis.py --dataset final
 python analysis.py --dataset pure
+python analysis.py --dataset qure
 
 # WikiDoMiner analysis
 python analysis.py --dataset promise --labeling_mode wikidominer
@@ -227,6 +235,7 @@ python analysis.py --dataset crowdre --labeling_mode wikidominer
 python analysis.py --dataset secreq  --labeling_mode wikidominer
 python analysis.py --dataset final   --labeling_mode wikidominer
 python analysis.py --dataset pure    --labeling_mode wikidominer
+python analysis.py --dataset qure    --labeling_mode wikidominer
 
 # Hybrid analysis
 python analysis.py --dataset promise --labeling_mode hybrid
@@ -234,6 +243,7 @@ python analysis.py --dataset crowdre --labeling_mode hybrid
 python analysis.py --dataset secreq  --labeling_mode hybrid
 python analysis.py --dataset final   --labeling_mode hybrid
 python analysis.py --dataset pure    --labeling_mode hybrid
+python analysis.py --dataset qure    --labeling_mode hybrid
 
 # Subsampled analysis (pass same cap used during experiment)
 python analysis.py --dataset promise --max_per_class 150

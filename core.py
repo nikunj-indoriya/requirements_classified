@@ -206,6 +206,33 @@ class PUREDataset:
     def get_class_names(self): return self.class_names
 
 
+class QUREDataset:
+    """
+    QuRE.csv — Requirements quality dataset.
+    Text  : 'requirement' column
+    Label : 'defect' column  ('ok' or 'defect')
+    """
+    def __init__(self, file_path):
+        self.file_path = file_path
+        self.texts, self.labels, self.class_names = [], [], None
+        self.label_encoder, self.label_decoder = {}, {}
+
+    def load(self):
+        df = pd.read_csv(self.file_path)
+        df = df.dropna(subset=["requirement", "defect"])
+        self.texts = df["requirement"].astype(str).tolist()
+        raw_labels = df["defect"].astype(str).tolist()
+        self.class_names = sorted(set(raw_labels))
+        self.label_encoder = {l: i for i, l in enumerate(self.class_names)}
+        self.label_decoder = {i: l for l, i in self.label_encoder.items()}
+        self.labels = np.array([self.label_encoder[l] for l in raw_labels])
+        return self
+
+    def get_texts(self):       return self.texts
+    def get_labels(self):      return self.labels
+    def get_class_names(self): return self.class_names
+
+
 def load_dataset(dataset_name, path):
     loaders = {
         "promise": PromiseDataset,
@@ -213,6 +240,7 @@ def load_dataset(dataset_name, path):
         "secreq":  SecReqDataset,
         "final":   FinalDataset,
         "pure":    PUREDataset,
+        "qure":    QUREDataset,
     }
     if dataset_name not in loaders:
         raise ValueError(f"Unsupported dataset: {dataset_name}")
